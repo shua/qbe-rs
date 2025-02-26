@@ -443,19 +443,40 @@ impl fmt::Display for TypeDef<'_> {
             }
             TypeDefItems::Opaque(size) => write!(f, "{{ {size} }}"),
         }
-        // write!(
-        //     f,
-        //     "{{ {} }}",
-        //     self.items
-        //         .iter()
-        //         .map(|(ty, count)| if *count > 1 {
-        //             format!("{} {}", ty, count)
-        //         } else {
-        //             format!("{}", ty)
-        //         })
-        //         .collect::<Vec<String>>()
-        //         .join(", "),
-        // )
+    }
+}
+
+impl<'a> TypeDef<'a> {
+    pub fn new_regular(
+        name: impl Into<String>,
+        align: Option<u64>,
+        items: Vec<(Type<'a>, usize)>,
+    ) -> Self {
+        TypeDef {
+            name: name.into(),
+            align,
+            items: TypeDefItems::Regular(items),
+        }
+    }
+
+    pub fn new_union(
+        name: impl Into<String>,
+        align: Option<u64>,
+        variants: Vec<Vec<(Type<'a>, usize)>>,
+    ) -> Self {
+        TypeDef {
+            name: name.into(),
+            align,
+            items: TypeDefItems::Union(variants),
+        }
+    }
+
+    pub fn new_opaque(name: impl Into<String>, align: Option<u64>, size: usize) -> Self {
+        TypeDef {
+            name: name.into(),
+            align,
+            items: TypeDefItems::Opaque(size),
+        }
     }
 }
 
