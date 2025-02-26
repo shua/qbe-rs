@@ -220,6 +220,33 @@ impl Type<'_> {
         }
     }
 
+    pub fn alignment(&self) -> u64 {
+        match self {
+            Self::Byte | Self::SignedByte | Self::UnsignedByte | Self::Zero => 1,
+            Self::Halfword | Self::SignedHalfword | Self::UnsignedHalfword => 2,
+            Self::Word | Self::Single => 4,
+            Self::Long | Self::Double => 8,
+            Type::Aggregate(td) => {
+                if let Some(alignment) = td.align {
+                    return alignment;
+                }
+
+                match &td.items {
+                    TypeDefItems::Regular(items) => (items.iter())
+                        .map(|(item, _)| item.alignment())
+                        .max()
+                        .unwrap_or(1),
+                    TypeDefItems::Union(variants) => (variants.iter())
+                        .flat_map(|items| items.iter())
+                        .map(|(item, _)| item.alignment())
+                        .max()
+                        .unwrap_or(1),
+                    TypeDefItems::Opaque(size) => *size as u64,
+                }
+            }
+        }
+    }
+
     /// Returns byte size for values of the type
     pub fn size(&self) -> u64 {
         match self {
@@ -228,12 +255,22 @@ impl Type<'_> {
             Self::Word | Self::Single => 4,
             Self::Long | Self::Double => 8,
             Self::Aggregate(td) => {
-                // TODO: correct for alignment
-                let mut sz = 0_u64;
-                for (item, repeat) in td.items.iter() {
-                    sz += item.size() * (*repeat as u64);
+                fn agg_size(items: &[(Type<'_>, usize)]) -> u64 {
+                    let mut sz = 0_u64;
+                    for (item, repeat) in items {
+                        let alignment = item.alignment();
+                        let padding = (alignment - (sz % alignment)) % alignment;
+                        sz += padding + item.size() * (*repeat as u64);
+                    }
+                    sz
                 }
-                sz
+                match &td.items {
+                    TypeDefItems::Regular(items) => agg_size(items),
+                    TypeDefItems::Union(variants) => {
+                        variants.iter().map(|v| agg_size(v)).max().unwrap_or(0)
+                    }
+                    TypeDefItems::Opaque(size) => *size as u64,
+                }
             }
         }
     }
@@ -353,7 +390,20 @@ pub struct TypeDef<'a> {
     pub name: String,
     pub align: Option<u64>,
     // TODO: Opaque types?
-    pub items: Vec<(Type<'a>, usize)>,
+    pub items: TypeDefItems<'a>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum TypeDefItems<'a> {
+    Regular(Vec<(Type<'a>, usize)>),
+    Union(Vec<Vec<(Type<'a>, usize)>>),
+    Opaque(usize),
+}
+
+impl Default for TypeDefItems<'_> {
+    fn default() -> Self {
+        Self::Regular(vec![])
+    }
 }
 
 impl fmt::Display for TypeDef<'_> {
@@ -363,19 +413,49 @@ impl fmt::Display for TypeDef<'_> {
             write!(f, "align {} ", align)?;
         }
 
-        write!(
-            f,
-            "{{ {} }}",
-            self.items
+        fn print_agg<W: std::fmt::Write>(
+            f: &mut W,
+            items: &[(Type<'_>, usize)],
+        ) -> std::fmt::Result {
+            write!(f, "{{")?;
+            for ((ty, count), pre) in items
                 .iter()
-                .map(|(ty, count)| if *count > 1 {
-                    format!("{} {}", ty, count)
+                .zip(std::iter::once("").chain(std::iter::repeat(",")))
+            {
+                if *count == 1 {
+                    write!(f, "{pre} {ty}")?;
                 } else {
-                    format!("{}", ty)
-                })
-                .collect::<Vec<String>>()
-                .join(", "),
-        )
+                    write!(f, "{pre} {ty} {count}")?;
+                }
+            }
+            write!(f, " }}")
+        }
+
+        match &self.items {
+            TypeDefItems::Regular(items) => print_agg(f, items),
+            TypeDefItems::Union(variants) => {
+                write!(f, "{{ ")?;
+                for variant in variants {
+                    print_agg(f, variant)?;
+                    write!(f, " ")?;
+                }
+                write!(f, "}}")
+            }
+            TypeDefItems::Opaque(size) => write!(f, "{{ {size} }}"),
+        }
+        // write!(
+        //     f,
+        //     "{{ {} }}",
+        //     self.items
+        //         .iter()
+        //         .map(|(ty, count)| if *count > 1 {
+        //             format!("{} {}", ty, count)
+        //         } else {
+        //             format!("{}", ty)
+        //         })
+        //         .collect::<Vec<String>>()
+        //         .join(", "),
+        // )
     }
 }
 
@@ -683,14 +763,14 @@ impl<'a> Module<'a> {
 
 impl fmt::Display for Module<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for func in self.functions.iter() {
-            writeln!(f, "{}", func)?;
-        }
         for ty in self.types.iter() {
             writeln!(f, "{}", ty)?;
         }
         for data in self.data.iter() {
             writeln!(f, "{}", data)?;
+        }
+        for func in self.functions.iter() {
+            writeln!(f, "{}", func)?;
         }
         Ok(())
     }

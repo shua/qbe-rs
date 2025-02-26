@@ -147,7 +147,7 @@ fn typedef() {
     let typedef = TypeDef {
         name: "person".into(),
         align: None,
-        items: vec![(Type::Long, 1), (Type::Word, 2), (Type::Byte, 1)],
+        items: TypeDefItems::Regular(vec![(Type::Long, 1), (Type::Word, 2), (Type::Byte, 1)]),
     };
 
     let formatted = format!("{}", typedef);
@@ -156,6 +156,15 @@ fn typedef() {
     let ty = Type::Aggregate(&typedef);
     let formatted = format!("{}", ty);
     assert_eq!(formatted, ":person");
+
+    let typedef = TypeDef {
+        name: "opaque".into(),
+        align: Some(16),
+        items: TypeDefItems::Opaque(32),
+    };
+
+    let formatted = format!("{}", typedef);
+    assert_eq!(formatted, "type :opaque = align 16 { 32 }");
 }
 
 #[test]
@@ -174,10 +183,26 @@ fn type_size() {
     let typedef = TypeDef {
         name: "person".into(),
         align: None,
-        items: vec![(Type::Long, 1), (Type::Word, 2), (Type::Byte, 1)],
+        items: TypeDefItems::Regular(vec![(Type::Long, 1), (Type::Word, 2), (Type::Byte, 1)]),
     };
     let aggregate = Type::Aggregate(&typedef);
     assert!(aggregate.size() == 17);
+
+    let typedef = TypeDef {
+        name: "opaque".into(),
+        align: None,
+        items: TypeDefItems::Opaque(32),
+    };
+    let opaque = Type::Aggregate(&typedef);
+    assert_eq!(opaque.size(), 32);
+
+    let typedef = TypeDef {
+        name: "union".into(),
+        align: None,
+        items: TypeDefItems::Union(vec![vec![(Type::Long, 1)], vec![(Type::Byte, 1)]]),
+    };
+    let union_ = Type::Aggregate(&typedef);
+    assert_eq!(union_.size(), Type::Long.size());
 }
 
 #[test]
@@ -185,25 +210,25 @@ fn type_size_nested_aggregate() {
     let inner = TypeDef {
         name: "dog".into(),
         align: None,
-        items: vec![(Type::Long, 2)],
+        items: TypeDefItems::Regular(vec![(Type::Long, 2)]),
     };
     let inner_aggregate = Type::Aggregate(&inner);
 
-    assert!(inner_aggregate.size() == 16);
+    assert_eq!(inner_aggregate.size(), 16);
 
     let typedef = TypeDef {
         name: "person".into(),
         align: None,
-        items: vec![
+        items: TypeDefItems::Regular(vec![
             (Type::Long, 1),
             (Type::Word, 2),
             (Type::Byte, 1),
             (Type::Aggregate(&inner), 1),
-        ],
+        ]),
     };
     let aggregate = Type::Aggregate(&typedef);
 
-    assert!(aggregate.size() == 33);
+    assert_eq!(aggregate.size(), 40);
 }
 
 #[test]
@@ -217,7 +242,7 @@ fn type_into_abi() {
     let typedef = TypeDef {
         name: "foo".into(),
         align: None,
-        items: Vec::new(),
+        items: TypeDefItems::Regular(vec![]),
     };
     unchanged(Type::Aggregate(&typedef));
 
@@ -249,7 +274,7 @@ fn type_into_base() {
     let typedef = TypeDef {
         name: "foo".into(),
         align: None,
-        items: Vec::new(),
+        items: TypeDefItems::Regular(vec![]),
     };
     assert_eq!(Type::Aggregate(&typedef).into_base(), Type::Long);
 }
